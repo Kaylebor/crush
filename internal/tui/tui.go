@@ -696,8 +696,8 @@ func handleMCPToolsEvent(ctx context.Context, name string) tea.Cmd {
 }
 
 // New creates and initializes a new TUI application model.
-func New(app *app.App) *appModel {
-	chatPage := chat.New(app)
+func New(app *app.App, ctx context.Context) *appModel {
+	chatPage := chat.New(app, ctx)
 	keyMap := DefaultKeyMap()
 	keyMap.pageBindings = chatPage.Bindings()
 

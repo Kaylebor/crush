@@ -313,27 +313,67 @@ in the root of your project or in subdirectories.
 
 ### Allowing Tools
 
-By default, Crush will ask you for permission before running tool calls. If
-you'd like, you can allow tools to be executed without prompting you for
-permissions. Use this with care.
+By default, Crush will ask you for permission before running tool calls. You can
+configure permissions using rule-based patterns for fine-grained control.
+
+**Quick Example:**
 
 ```json
 {
   "$schema": "https://charm.land/crush.json",
   "permissions": {
-    "allowed_tools": [
-      "view",
-      "ls",
-      "grep",
-      "edit",
-      "mcp_context7_get-library-doc"
-    ]
+    "rules": [
+      {
+        "tool": "bash",
+        "allow": ["ls", "pwd", "git status", "npm test"]
+      },
+      {
+        "tool": "edit",
+        "allow": ["**/*.go", "**/*.md"],
+        "deny": ["**/.env", "**/*.key"]
+      }
+    ],
+    "default": "ask"
   }
 }
 ```
 
-You can also skip all permission prompts entirely by running Crush with the
-`--yolo` flag. Be very, very careful with this feature.
+**Key Concepts:**
+
+- **Rules** define permissions for specific tools (e.g., `bash`, `edit`, `download`)
+- **Effects**: `allow`, `deny`, or `ask` (prompt for confirmation)
+- **Patterns**: Use glob syntax (`**/*.go`) or regex for fine-grained control
+- **Default**: Fallback behavior when no rules match
+
+**For backwards compatibility**, the legacy `allowed_tools` format is still supported:
+
+```json
+{
+  "permissions": {
+    "allowed_tools": ["view", "ls", "grep"]
+  }
+}
+```
+
+**WARNING**: You can skip all permission prompts with the `--yolo` flag, but this
+is dangerous and not recommended for security reasons.
+
+**📚 Documentation:** See [PERMISSIONS.md](./PERMISSIONS.md) for comprehensive
+documentation on:
+- Security model and concepts
+- Complete rule syntax and options
+- Pattern matching (glob, prefix, regex)
+- Practical examples for common scenarios
+- Migration guide from `allowed_tools`
+- Security best practices
+
+**⚡ Quick Reference:** See [PERMISSIONS_QUICK_REF.md](./PERMISSIONS_QUICK_REF.md)
+for:
+- Common patterns by use case
+- Tool-by-tool examples
+- Pattern wildcards guide
+- Quick decision tree
+- Testing your configuration
 
 ### Initialization
 

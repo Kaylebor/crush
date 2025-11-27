@@ -25,6 +25,7 @@ import (
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/permission"
+	"github.com/charmbracelet/crush/internal/ruleengine"
 	"github.com/charmbracelet/crush/internal/session"
 	"golang.org/x/sync/errgroup"
 
@@ -37,6 +38,24 @@ import (
 	"charm.land/fantasy/providers/openrouter"
 	openaisdk "github.com/openai/openai-go/v2/option"
 	"github.com/qjebbs/go-jsons"
+)
+
+const (
+	// DefaultAnthropicThinkingBudget is the default token budget for Anthropic's thinking feature
+	DefaultAnthropicThinkingBudget = 2000
+
+	// DefaultGoogleThinkingBudget is the default token budget for Google's thinking config
+	DefaultGoogleThinkingBudget = 2000
+
+	// AnthropicBetaHeaderInterleavedThinking is the Anthropic beta header value for interleaved thinking
+	AnthropicBetaHeaderInterleavedThinking = "interleaved-thinking-2025-05-14"
+
+	// Model IDs for Exacto supported models
+	ModelMoonshotKimiK2     = "moonshotai/kimi-k2-0905"
+	ModelDeepseekV3Terminus = "deepseek/deepseek-v3.1-terminus"
+	ModelZAiGLM4            = "z-ai/glm-4.6"
+	ModelOpenAIGPTOss120b   = "openai/gpt-oss-120b"
+	ModelQwen3Coder         = "qwen/qwen3-coder"
 )
 
 type Coordinator interface {
@@ -232,7 +251,7 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 		if !hasThink && model.ModelCfg.Think {
 			mergedOptions["thinking"] = map[string]any{
 				// TODO: kujtim see if we need to make this dynamic
-				"budget_tokens": 2000,
+				"budget_tokens": DefaultAnthropicThinkingBudget,
 			}
 		}
 		parsed, err := anthropic.ParseOptions(mergedOptions)
@@ -256,7 +275,7 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 		_, hasReasoning := mergedOptions["thinking_config"]
 		if !hasReasoning {
 			mergedOptions["thinking_config"] = map[string]any{
-				"thinking_budget":  2000,
+				"thinking_budget":  DefaultGoogleThinkingBudget,
 				"include_thoughts": true,
 			}
 		}
@@ -371,7 +390,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 
 	var filteredTools []fantasy.AgentTool
 	for _, tool := range allTools {
-		if slices.Contains(agent.AllowedTools, tool.Info().Name) {
+		if c.shouldMakeToolAvailable(agent, tool.Info().Name) {
 			filteredTools = append(filteredTools, tool)
 		}
 	}
@@ -402,6 +421,86 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 		return strings.Compare(a.Info().Name, b.Info().Name)
 	})
 	return filteredTools, nil
+}
+
+// shouldMakeToolAvailable determines if a tool should be made available to an agent
+// based on permission rules or legacy AllowedTools configuration.
+func (c *coordinator) shouldMakeToolAvailable(agent config.Agent, toolName string) bool {
+	// If permissions has compiled rules with actual rules, rule engine takes priority
+	// This is the new behavior - explicit rules override legacy configuration
+	if c.cfg.Permissions != nil && c.cfg.Permissions.RuleSet() != nil {
+		ruleSet := c.cfg.Permissions.RuleSet()
+		compiledRules := ruleSet.GetCompiledRules()
+
+		// If there are no actual rules, fall back to legacy mode
+		if len(compiledRules) > 0 {
+			// Check if any rule matches the tool
+			hasToolRule := ruleSet.HasToolRule(toolName)
+
+			if hasToolRule {
+				// Check if the tool has a blanket deny (either DenyAll or deny patterns that would match anything)
+				for _, compiledRule := range compiledRules {
+					if compiledRule.Rule().Tool != toolName {
+						continue
+					}
+
+					// Explicit DenyAll - tool completely denied
+					if compiledRule.Rule().DenyAll {
+						return false
+					}
+
+					// AllowAll without restrictions - tool completely available
+					if compiledRule.Rule().AllowAll {
+						// No allow patterns means all operations are permitted
+						if len(compiledRule.Rule().Allow) == 0 {
+							return true
+						}
+						// Has specific allow patterns - tool available but operations restricted
+						return true
+					}
+
+					// Check for blanket deny patterns like "*" that would match everything
+					if len(compiledRule.Rule().Deny) > 0 {
+						for _, denyPattern := range compiledRule.Rule().Deny {
+							if denyPattern == "*" {
+								// Pattern matches everything, tool effectively denied completely
+								return false
+							}
+						}
+					}
+
+					// Tool has rules but no blanket denies - it's available (operations checked at runtime)
+					return true
+				}
+			}
+
+			// No specific rule for this tool, check default effect
+			switch ruleSet.DefaultEffect {
+			case ruleengine.Deny:
+				return false // Tool denied by default
+			case ruleengine.Allow, ruleengine.Ask:
+				return true // Tool available (permissions checked at runtime)
+			}
+		}
+	}
+
+	// No compiled rules or empty rules, check for legacy AllowedTools
+	if len(agent.AllowedTools) > 0 {
+		return slices.Contains(agent.AllowedTools, toolName)
+	}
+
+	// No rules or AllowedTools configured, check for permissions default effect at config level
+	if c.cfg.Permissions != nil && c.cfg.Permissions.DefaultEffect != "" {
+		switch c.cfg.Permissions.DefaultEffect {
+		case ruleengine.Deny:
+			return false
+		case ruleengine.Allow, ruleengine.Ask:
+			return true
+		}
+	}
+
+	// Nothing configured, default to allowing all tools (backward compatibility)
+	return true
 }
 
 // TODO: when we support multiple agents we need to change this so that we pass in the agent specific model config
@@ -669,9 +768,9 @@ func (c *coordinator) buildProvider(providerCfg config.ProviderConfig, model con
 	// handle special headers for anthropic
 	if providerCfg.Type == anthropic.Name && c.isAnthropicThinking(model) {
 		if v, ok := headers["anthropic-beta"]; ok {
-			headers["anthropic-beta"] = v + ",interleaved-thinking-2025-05-14"
+			headers["anthropic-beta"] = v + "," + AnthropicBetaHeaderInterleavedThinking
 		} else {
-			headers["anthropic-beta"] = "interleaved-thinking-2025-05-14"
+			headers["anthropic-beta"] = AnthropicBetaHeaderInterleavedThinking
 		}
 	}
 
@@ -708,11 +807,11 @@ func (c *coordinator) buildProvider(providerCfg config.ProviderConfig, model con
 
 func isExactoSupported(modelID string) bool {
 	supportedModels := []string{
-		"moonshotai/kimi-k2-0905",
-		"deepseek/deepseek-v3.1-terminus",
-		"z-ai/glm-4.6",
-		"openai/gpt-oss-120b",
-		"qwen/qwen3-coder",
+		ModelMoonshotKimiK2,
+		ModelDeepseekV3Terminus,
+		ModelZAiGLM4,
+		ModelOpenAIGPTOss120b,
+		ModelQwen3Coder,
 	}
 	return slices.Contains(supportedModels, modelID)
 }

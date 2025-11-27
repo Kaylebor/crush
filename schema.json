@@ -423,6 +423,56 @@
         "disabled_tools"
       ]
     },
+    "PermissionRule": {
+      "properties": {
+        "tool": {
+          "type": "string",
+          "description": "Tool to match (bash, edit, write, etc.)"
+        },
+        "allow": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Commands/paths to allow"
+        },
+        "deny": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Commands/paths to deny"
+        },
+        "regex": {
+          "type": "boolean",
+          "description": "Use regex patterns instead of simple matching",
+          "default": false
+        },
+        "path": {
+          "type": "string",
+          "description": "Optional: Path restrictions (for file-based tools)"
+        },
+        "message": {
+          "type": "string",
+          "description": "Optional: Custom error message when rule denies"
+        },
+        "allow_all": {
+          "type": "boolean",
+          "description": "Allow any operation for this tool (bypasses pattern matching)",
+          "default": false
+        },
+        "deny_all": {
+          "type": "boolean",
+          "description": "Deny all operations for this tool",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "tool"
+      ]
+    },
     "Permissions": {
       "properties": {
         "allowed_tools": {
@@ -434,7 +484,28 @@
             ]
           },
           "type": "array",
-          "description": "List of tools that don't require permission prompts"
+          "description": "Legacy: List of tools that don't require permission prompts. Use 'rules' instead."
+        },
+        "rules": {
+          "items": {
+            "$ref": "#/$defs/PermissionRule"
+          },
+          "type": "array",
+          "description": "Permission rules for controlling tool access with pattern matching"
+        },
+        "default": {
+          "type": "string",
+          "enum": [
+            "allow",
+            "deny",
+            "ask"
+          ],
+          "description": "Default action when no rule matches",
+          "default": "ask"
+        },
+        "root_directory": {
+          "type": "string",
+          "description": "Base directory for file operations (empty means no restriction)"
         }
       },
       "additionalProperties": false,

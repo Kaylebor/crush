@@ -70,7 +70,7 @@ func NewDownloadTool(permissions permission.Service, workingDir string, client *
 				return fantasy.ToolResponse{}, fmt.Errorf("session ID is required for downloading files")
 			}
 
-			p := permissions.Request(
+			_, reqErr := permissions.Request(
 				permission.CreatePermissionRequest{
 					SessionID:   sessionID,
 					Path:        filePath,
@@ -81,8 +81,8 @@ func NewDownloadTool(permissions permission.Service, workingDir string, client *
 				},
 			)
 
-			if !p {
-				return fantasy.ToolResponse{}, permission.ErrorPermissionDenied
+			if reqErr != nil {
+				return fantasy.ToolResponse{}, reqErr
 			}
 
 			// Handle timeout with context

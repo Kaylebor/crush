@@ -165,7 +165,7 @@ func processMultiEditWithCreation(edit editContext, params MultiEditParams, call
 	// Check permissions
 	_, additions, removals := diff.GenerateDiff("", currentContent, strings.TrimPrefix(params.FilePath, edit.workingDir))
 
-	p := edit.permissions.Request(permission.CreatePermissionRequest{
+	_, permErr := edit.permissions.Request(permission.CreatePermissionRequest{
 		SessionID:   sessionID,
 		Path:        fsext.PathOrPrefix(params.FilePath, edit.workingDir),
 		ToolCallID:  call.ID,
@@ -178,8 +178,8 @@ func processMultiEditWithCreation(edit editContext, params MultiEditParams, call
 			NewContent: currentContent,
 		},
 	})
-	if !p {
-		return fantasy.ToolResponse{}, permission.ErrorPermissionDenied
+	if permErr != nil {
+		return fantasy.ToolResponse{}, permErr
 	}
 
 	// Write the file
@@ -299,7 +299,7 @@ func processMultiEditExistingFile(edit editContext, params MultiEditParams, call
 
 	// Generate diff and check permissions
 	_, additions, removals := diff.GenerateDiff(oldContent, currentContent, strings.TrimPrefix(params.FilePath, edit.workingDir))
-	p := edit.permissions.Request(permission.CreatePermissionRequest{
+	_, err = edit.permissions.Request(permission.CreatePermissionRequest{
 		SessionID:   sessionID,
 		Path:        fsext.PathOrPrefix(params.FilePath, edit.workingDir),
 		ToolCallID:  call.ID,
@@ -312,8 +312,8 @@ func processMultiEditExistingFile(edit editContext, params MultiEditParams, call
 			NewContent: currentContent,
 		},
 	})
-	if !p {
-		return fantasy.ToolResponse{}, permission.ErrorPermissionDenied
+	if err != nil {
+		return fantasy.ToolResponse{}, err
 	}
 
 	if isCrlf {

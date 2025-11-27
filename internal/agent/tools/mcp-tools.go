@@ -89,7 +89,7 @@ func (m *Tool) Run(ctx context.Context, params fantasy.ToolCall) (fantasy.ToolRe
 		return fantasy.ToolResponse{}, fmt.Errorf("session ID is required for creating a new file")
 	}
 	permissionDescription := fmt.Sprintf("execute %s with the following parameters:", m.Info().Name)
-	p := m.permissions.Request(
+	_, err := m.permissions.Request(
 		permission.CreatePermissionRequest{
 			SessionID:   sessionID,
 			ToolCallID:  params.ID,
@@ -100,8 +100,8 @@ func (m *Tool) Run(ctx context.Context, params fantasy.ToolCall) (fantasy.ToolRe
 			Params:      params.Input,
 		},
 	)
-	if !p {
-		return fantasy.ToolResponse{}, permission.ErrorPermissionDenied
+	if err != nil {
+		return fantasy.ToolResponse{}, err
 	}
 
 	content, err := mcp.RunTool(ctx, m.mcpName, m.tool.Name, params.Input)

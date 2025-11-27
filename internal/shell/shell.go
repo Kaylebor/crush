@@ -51,11 +51,10 @@ type BlockFunc func(args []string) bool
 
 // Shell provides cross-platform shell execution with optional state persistence
 type Shell struct {
-	env        []string
-	cwd        string
-	mu         sync.Mutex
-	logger     Logger
-	blockFuncs []BlockFunc
+	env    []string
+	cwd    string
+	mu     sync.Mutex
+	logger Logger
 }
 
 // Options for creating a new shell
@@ -88,10 +87,9 @@ func NewShell(opts *Options) *Shell {
 	}
 
 	return &Shell{
-		cwd:        cwd,
-		env:        env,
-		logger:     logger,
-		blockFuncs: opts.BlockFuncs,
+		cwd:    cwd,
+		env:    env,
+		logger: logger,
 	}
 }
 
@@ -158,13 +156,6 @@ func (s *Shell) SetEnv(key, value string) {
 	s.env = append(s.env, keyPrefix+value)
 }
 
-// SetBlockFuncs sets the command block functions for the shell
-func (s *Shell) SetBlockFuncs(blockFuncs []BlockFunc) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.blockFuncs = blockFuncs
-}
-
 // CommandsBlocker creates a BlockFunc that blocks exact command matches
 func CommandsBlocker(cmds []string) BlockFunc {
 	bannedSet := make(map[string]struct{})
@@ -223,12 +214,6 @@ func (s *Shell) blockHandler() func(next interp.ExecHandlerFunc) interp.ExecHand
 		return func(ctx context.Context, args []string) error {
 			if len(args) == 0 {
 				return next(ctx, args)
-			}
-
-			for _, blockFunc := range s.blockFuncs {
-				if blockFunc(args) {
-					return fmt.Errorf("command is not allowed for security reasons: %s", strings.Join(args, " "))
-				}
 			}
 
 			return next(ctx, args)

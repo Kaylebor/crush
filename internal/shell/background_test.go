@@ -15,7 +15,7 @@ func TestBackgroundShellManager_Start(t *testing.T) {
 	workingDir := t.TempDir()
 	manager := GetBackgroundShellManager()
 
-	bgShell, err := manager.Start(ctx, workingDir, nil, "echo 'hello world'", "")
+	bgShell, err := manager.Start(ctx, workingDir, "echo 'hello world'", "")
 	if err != nil {
 		t.Fatalf("failed to start background shell: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestBackgroundShellManager_Get(t *testing.T) {
 	workingDir := t.TempDir()
 	manager := GetBackgroundShellManager()
 
-	bgShell, err := manager.Start(ctx, workingDir, nil, "echo 'test'", "")
+	bgShell, err := manager.Start(ctx, workingDir, "echo 'test'", "")
 	if err != nil {
 		t.Fatalf("failed to start background shell: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestBackgroundShellManager_Kill(t *testing.T) {
 	manager := GetBackgroundShellManager()
 
 	// Start a long-running command
-	bgShell, err := manager.Start(ctx, workingDir, nil, "sleep 10", "")
+	bgShell, err := manager.Start(ctx, workingDir, "sleep 10", "")
 	if err != nil {
 		t.Fatalf("failed to start background shell: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestBackgroundShell_IsDone(t *testing.T) {
 	workingDir := t.TempDir()
 	manager := GetBackgroundShellManager()
 
-	bgShell, err := manager.Start(ctx, workingDir, nil, "echo 'quick'", "")
+	bgShell, err := manager.Start(ctx, workingDir, "echo 'quick'", "")
 	if err != nil {
 		t.Fatalf("failed to start background shell: %v", err)
 	}
@@ -136,40 +136,6 @@ func TestBackgroundShell_IsDone(t *testing.T) {
 	manager.Kill(bgShell.ID)
 }
 
-func TestBackgroundShell_WithBlockFuncs(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	workingDir := t.TempDir()
-	manager := GetBackgroundShellManager()
-
-	blockFuncs := []BlockFunc{
-		CommandsBlocker([]string{"curl", "wget"}),
-	}
-
-	bgShell, err := manager.Start(ctx, workingDir, blockFuncs, "curl example.com", "")
-	if err != nil {
-		t.Fatalf("failed to start background shell: %v", err)
-	}
-
-	// Wait for the command to complete
-	bgShell.Wait()
-
-	stdout, stderr, done, execErr := bgShell.GetOutput()
-	if !done {
-		t.Error("expected shell to be done")
-	}
-
-	// The command should have been blocked
-	output := stdout + stderr
-	if !strings.Contains(output, "not allowed") && execErr == nil {
-		t.Errorf("expected command to be blocked, got stdout: %s, stderr: %s, err: %v", stdout, stderr, execErr)
-	}
-
-	// Clean up
-	manager.Kill(bgShell.ID)
-}
-
 func TestBackgroundShellManager_List(t *testing.T) {
 	t.Parallel()
 
@@ -178,12 +144,12 @@ func TestBackgroundShellManager_List(t *testing.T) {
 	manager := GetBackgroundShellManager()
 
 	// Start two shells
-	bgShell1, err := manager.Start(ctx, workingDir, nil, "sleep 1", "")
+	bgShell1, err := manager.Start(ctx, workingDir, "sleep 1", "")
 	if err != nil {
 		t.Fatalf("failed to start first background shell: %v", err)
 	}
 
-	bgShell2, err := manager.Start(ctx, workingDir, nil, "sleep 1", "")
+	bgShell2, err := manager.Start(ctx, workingDir, "sleep 1", "")
 	if err != nil {
 		t.Fatalf("failed to start second background shell: %v", err)
 	}
@@ -222,17 +188,17 @@ func TestBackgroundShellManager_KillAll(t *testing.T) {
 	manager := GetBackgroundShellManager()
 
 	// Start multiple long-running shells
-	shell1, err := manager.Start(ctx, workingDir, nil, "sleep 10", "")
+	shell1, err := manager.Start(ctx, workingDir, "sleep 10", "")
 	if err != nil {
 		t.Fatalf("failed to start shell 1: %v", err)
 	}
 
-	shell2, err := manager.Start(ctx, workingDir, nil, "sleep 10", "")
+	shell2, err := manager.Start(ctx, workingDir, "sleep 10", "")
 	if err != nil {
 		t.Fatalf("failed to start shell 2: %v", err)
 	}
 
-	shell3, err := manager.Start(ctx, workingDir, nil, "sleep 10", "")
+	shell3, err := manager.Start(ctx, workingDir, "sleep 10", "")
 	if err != nil {
 		t.Fatalf("failed to start shell 3: %v", err)
 	}

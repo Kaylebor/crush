@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/crush/internal/env"
 	"github.com/charmbracelet/crush/internal/oauth"
 	"github.com/charmbracelet/crush/internal/oauth/claude"
+	"github.com/charmbracelet/crush/internal/ruleengine"
 	"github.com/invopop/jsonschema"
 	"github.com/tidwall/sjson"
 )
@@ -26,6 +27,95 @@ const (
 	defaultDataDirectory = ".crush"
 	defaultInitializeAs  = "AGENTS.md"
 )
+
+// DefaultRules defines the default permission rules for new installations.
+// These provide sensible defaults matching the original tool categorization behavior.
+var DefaultRules = []ruleengine.PermissionRule{
+	// Read-only tools - allowed without restrictions
+	{Tool: "glob", AllowAll: true},
+	{Tool: "grep", AllowAll: true},
+	{Tool: "ls", AllowAll: true},
+	{Tool: "sourcegraph", AllowAll: true},
+	{Tool: "view", AllowAll: true},
+
+	// Network tools - use built-in fetch/download instead
+	{
+		Tool:    "bash",
+		Deny:    []string{"curl", "wget", "ftp", "sftp", "scp", "telnet", "nc"},
+		Message: "Use Crush's built-in 'fetch' or 'download' tools instead of command-line network tools",
+	},
+
+	// Protect Crush configuration from modification
+	{
+		Tool: "write",
+		Deny: []string{
+			"**/.config/crush/**",
+			"**/.local/share/crush/**",
+			"**/crush.json",
+			"**/.crush.json",
+			"**/providers.json",
+			"**/logs/**",
+		},
+		Message: "Configuration and sensitive files cannot be modified - use Crush settings instead",
+	},
+	{
+		Tool: "edit",
+		Deny: []string{
+			"**/.config/crush/**",
+			"**/.local/share/crush/**",
+			"**/crush.json",
+			"**/.crush.json",
+			"**/providers.json",
+			"**/logs/**",
+		},
+		Message: "Configuration and sensitive files cannot be modified - use Crush settings instead",
+	},
+
+	// Potentially unsafe tools - require prompt by default
+	// No explicit allow/deny patterns means they'll use DefaultEffect
+	{Tool: "agent"},
+	{Tool: "bash"},
+	{Tool: "job_output"},
+	{Tool: "job_kill"},
+	{Tool: "download"},
+	{Tool: "edit"},
+	{Tool: "multiedit"},
+	{Tool: "lsp_diagnostics"},
+	{Tool: "lsp_references"},
+	{Tool: "fetch"},
+	{Tool: "agentic_fetch"},
+	{Tool: "write"},
+}
+
+// AgentCoderTools defines all tools available to the coder agent.
+var AgentCoderTools = []string{
+	"agent",
+	"bash",
+	"job_output",
+	"job_kill",
+	"download",
+	"edit",
+	"multiedit",
+	"lsp_diagnostics",
+	"lsp_references",
+	"fetch",
+	"agentic_fetch",
+	"glob",
+	"grep",
+	"ls",
+	"sourcegraph",
+	"view",
+	"write",
+}
+
+// AgentTaskTools defines tools available to the task agent (read-only only).
+var AgentTaskTools = []string{
+	"glob",
+	"grep",
+	"ls",
+	"sourcegraph",
+	"view",
+}
 
 var defaultContextPaths = []string{
 	".github/copilot-instructions.md",
@@ -185,8 +275,120 @@ func (c Completions) Limits() (depth, items int) {
 }
 
 type Permissions struct {
-	AllowedTools []string `json:"allowed_tools,omitempty" jsonschema:"description=List of tools that don't require permission prompts,example=bash,example=view"` // Tools that don't require permission prompts
-	SkipRequests bool     `json:"-"`                                                                                                                              // Automatically accept all permissions (YOLO mode)
+	// AllowedTools (legacy) specifies tools that don't require permission prompts
+	// Deprecated: Use Rules instead for more granular control
+	AllowedTools []string `json:"allowed_tools,omitempty" jsonschema:"description=DEPRECATED: Use 'rules' instead for more granular control. List of tools that don't require permission prompts,example=bash,example=view"`
+
+	// Rules defines permission rules for controlling tool access with pattern matching
+	Rules []ruleengine.PermissionRule `json:"rules,omitempty" jsonschema:"description=Permission rules for controlling tool access with pattern matching"`
+
+	// DefaultEffect determines what happens when no rule matches (allow/deny/ask)
+	DefaultEffect ruleengine.Effect `json:"default,omitempty" jsonschema:"description=Default action when no rule matches,enum=allow,enum=deny,enum=ask,default=ask"`
+
+	// RootDirectory constrains file operations to this directory and its subdirectories
+	RootDirectory string `json:"root_directory,omitempty" jsonschema:"description=Base directory for file operations (empty means no restriction)"`
+
+	// Debug enables debug logging for permission rule evaluation
+	Debug bool `json:"debug,omitempty" jsonschema:"description=Enable debug logging for permission rule evaluation"`
+
+	skipRequests    bool                // Automatically accept all permissions (YOLO mode)
+	compiledRuleSet *ruleengine.RuleSet `json:"-"` // Compiled rules for efficient evaluation
+}
+
+// Validate checks if the permissions configuration is valid
+func (p *Permissions) Validate() error {
+	// Check for conflicting legacy and new format
+	if len(p.AllowedTools) > 0 && len(p.Rules) > 0 {
+		return fmt.Errorf("cannot use both 'allowed_tools' (legacy) and 'rules' simultaneously. Migrate to using 'rules' only")
+	}
+
+	// Validate DefaultEffect if set
+	if p.DefaultEffect != "" {
+		switch p.DefaultEffect {
+		case ruleengine.Allow, ruleengine.Deny, ruleengine.Ask:
+			// Valid
+		default:
+			return fmt.Errorf("invalid default effect: %q (must be 'allow', 'deny', or 'ask')", p.DefaultEffect)
+		}
+	}
+
+	// Validate rules if present
+	for i, rule := range p.Rules {
+		if err := rule.Validate(); err != nil {
+			return fmt.Errorf("rule %d: %w", i, err)
+		}
+	}
+
+	// Compile rules for efficient evaluation
+	if err := p.CompileRules(); err != nil {
+		return fmt.Errorf("failed to compile rules: %w", err)
+	}
+
+	return nil
+}
+
+// SkipRequests returns whether permission requests should be skipped.
+func (p *Permissions) SkipRequests() bool {
+	if p == nil {
+		return false
+	}
+	return p.skipRequests
+}
+
+// SetSkipRequests sets whether permission requests should be skipped.
+func (p *Permissions) SetSkipRequests(skip bool) {
+	if p != nil {
+		p.skipRequests = skip
+	}
+}
+
+// CompileRules compiles the permission rules for efficient evaluation.
+// This creates a RuleSet and compiles all patterns.
+func (p *Permissions) CompileRules() error {
+	if p == nil {
+		return nil
+	}
+
+	// Create RuleSet with rules and default effect
+	// Even with no rules, we need the RuleSet for the default effect
+	ruleSet := &ruleengine.RuleSet{
+		Rules:         p.Rules,
+		DefaultEffect: p.DefaultEffect,
+		RootDirectory: p.RootDirectory,
+	}
+
+	// Compile the rules (this handles empty rules slice correctly)
+	if err := ruleSet.Compile(); err != nil {
+		return err
+	}
+
+	// Store the compiled rule set for later use
+	p.compiledRuleSet = ruleSet
+	return nil
+}
+
+// RuleSet returns the compiled rule set for permission evaluation.
+// Returns nil if no rules are configured or compilation failed.
+func (p *Permissions) RuleSet() *ruleengine.RuleSet {
+	if p == nil {
+		return nil
+	}
+	return p.compiledRuleSet
+}
+
+// IsDebug returns whether debug logging for permission rule evaluation is enabled.
+func (p *Permissions) IsDebug() bool {
+	if p == nil {
+		return false
+	}
+	return p.Debug
+}
+
+// SetDebugMode sets whether debug logging for permission rule evaluation is enabled.
+func (p *Permissions) SetDebugMode(debug bool) {
+	if p != nil {
+		p.Debug = debug
+	}
 }
 
 type TrailerStyle string
@@ -610,78 +812,19 @@ func (c *Config) recordRecentModel(modelType SelectedModelType, model SelectedMo
 	return nil
 }
 
-func allToolNames() []string {
-	return []string{
-		"agent",
-		"bash",
-		"job_output",
-		"job_kill",
-		"download",
-		"edit",
-		"multiedit",
-		"lsp_diagnostics",
-		"lsp_references",
-		"fetch",
-		"agentic_fetch",
-		"glob",
-		"grep",
-		"ls",
-		"sourcegraph",
-		"view",
-		"write",
-	}
-}
-
-func resolveAllowedTools(allTools []string, disabledTools []string) []string {
-	if disabledTools == nil {
-		return allTools
-	}
-	// filter out disabled tools (exclude mode)
-	return filterSlice(allTools, disabledTools, false)
-}
-
-func resolveReadOnlyTools(tools []string) []string {
-	readOnlyTools := []string{"glob", "grep", "ls", "sourcegraph", "view"}
-	// filter to only include tools that are in allowedtools (include mode)
-	return filterSlice(tools, readOnlyTools, true)
-}
-
-func filterSlice(data []string, mask []string, include bool) []string {
-	filtered := []string{}
-	for _, s := range data {
-		// if include is true, we include items that ARE in the mask
-		// if include is false, we include items that are NOT in the mask
-		if include == slices.Contains(mask, s) {
-			filtered = append(filtered, s)
-		}
-	}
-	return filtered
-}
-
 func (c *Config) SetupAgents() {
-	allowedTools := resolveAllowedTools(allToolNames(), c.Options.DisabledTools)
-
-	agents := map[string]Agent{
-		AgentCoder: {
-			ID:           AgentCoder,
-			Name:         "Coder",
-			Description:  "An agent that helps with executing coding tasks.",
-			Model:        SelectedModelTypeLarge,
-			ContextPaths: c.Options.ContextPaths,
-			AllowedTools: allowedTools,
-		},
-
-		AgentTask: {
-			ID:           AgentCoder,
-			Name:         "Task",
-			Description:  "An agent that helps with searching for context and finding implementation details.",
-			Model:        SelectedModelTypeLarge,
-			ContextPaths: c.Options.ContextPaths,
-			AllowedTools: resolveReadOnlyTools(allowedTools),
-			// NO MCPs or LSPs by default
-			AllowedMCP: map[string][]string{},
-		},
+	// Set up default permissions if none exist (explicit new system)
+	if c.Permissions != nil && len(c.Permissions.Rules) == 0 && len(c.Permissions.AllowedTools) == 0 {
+		c.Permissions.Rules = DefaultRules
+		c.Permissions.DefaultEffect = ruleengine.Ask
 	}
+
+	// Build agents from definitions
+	agents := make(map[string]Agent)
+	for _, def := range SystemAgentDefinitions() {
+		agents[def.ID] = c.BuildAgentFromDefinition(def)
+	}
+
 	c.Agents = agents
 }
 

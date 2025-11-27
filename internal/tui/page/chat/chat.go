@@ -103,6 +103,9 @@ type chatPage struct {
 	session session.Session
 	keyMap  KeyMap
 
+	// Context for tool execution (includes interactive flag)
+	ctx context.Context
+
 	// Components
 	header  header.Header
 	sidebar sidebar.Sidebar
@@ -118,9 +121,10 @@ type chatPage struct {
 	isProjectInit    bool
 }
 
-func New(app *app.App) ChatPage {
+func New(app *app.App, ctx context.Context) ChatPage {
 	return &chatPage{
 		app:         app,
+		ctx:         ctx,
 		keyMap:      DefaultKeyMap(),
 		header:      header.New(app.LSPClients),
 		sidebar:     sidebar.New(app.History, app.LSPClients, false),
@@ -763,7 +767,7 @@ func (p *chatPage) sendMessage(text string, attachments []message.Attachment) te
 	}
 	cmds = append(cmds, p.chat.GoToBottom())
 	cmds = append(cmds, func() tea.Msg {
-		_, err := p.app.AgentCoordinator.Run(context.Background(), session.ID, text, attachments...)
+		_, err := p.app.AgentCoordinator.Run(p.ctx, session.ID, text, attachments...)
 		if err != nil {
 			isCancelErr := errors.Is(err, context.Canceled)
 			isPermissionErr := errors.Is(err, permission.ErrorPermissionDenied)

@@ -28,6 +28,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/exp/charmtone"
 	"github.com/charmbracelet/x/term"
+	"github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/spf13/cobra"
 )
 
@@ -35,6 +36,7 @@ func init() {
 	rootCmd.PersistentFlags().StringP("cwd", "c", "", "Current working directory")
 	rootCmd.PersistentFlags().StringP("data-dir", "D", "", "Custom crush data directory")
 	rootCmd.PersistentFlags().BoolP("debug", "d", false, "Debug")
+	rootCmd.PersistentFlags().Bool("debug-permissions", false, "Debug permission rule evaluation")
 	rootCmd.Flags().BoolP("help", "h", false, "Help")
 	rootCmd.Flags().BoolP("yolo", "y", false, "Automatically accept all permissions (dangerous mode)")
 
@@ -45,6 +47,7 @@ func init() {
 		logsCmd,
 		schemaCmd,
 		loginCmd,
+		validatePermissionsCmd,
 	)
 }
 
@@ -85,15 +88,18 @@ crush -y
 
 		event.AppInitialized()
 
+		// Mark CLI as interactive for TUI mode
+		ctx := context.WithValue(cmd.Context(), tools.IsInteractiveCLIContextKey, true)
+
 		// Set up the TUI.
 		var env uv.Environ = os.Environ()
-		ui := tui.New(app)
+		ui := tui.New(app, ctx)
 		ui.QueryVersion = shouldQueryTerminalVersion(env)
 
 		program := tea.NewProgram(
 			ui,
 			tea.WithEnvironment(env),
-			tea.WithContext(cmd.Context()),
+			tea.WithContext(ctx),
 			tea.WithFilter(tui.MouseEventFilter)) // Filter mouse events based on focus state
 		go app.Subscribe(program)
 
@@ -166,6 +172,7 @@ func setupAppWithProgressBar(cmd *cobra.Command) (*app.App, error) {
 func setupApp(cmd *cobra.Command) (*app.App, error) {
 	debug, _ := cmd.Flags().GetBool("debug")
 	yolo, _ := cmd.Flags().GetBool("yolo")
+	debugPermissions, _ := cmd.Flags().GetBool("debug-permissions")
 	dataDir, _ := cmd.Flags().GetString("data-dir")
 	ctx := cmd.Context()
 
@@ -182,7 +189,8 @@ func setupApp(cmd *cobra.Command) (*app.App, error) {
 	if cfg.Permissions == nil {
 		cfg.Permissions = &config.Permissions{}
 	}
-	cfg.Permissions.SkipRequests = yolo
+	cfg.Permissions.SetSkipRequests(yolo)
+	cfg.Permissions.SetDebugMode(debugPermissions)
 
 	if err := createDotCrushDir(cfg.Options.DataDirectory); err != nil {
 		return nil, err

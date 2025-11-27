@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/catwalk/pkg/catwalk"
 	"github.com/charmbracelet/crush/internal/csync"
 	"github.com/charmbracelet/crush/internal/env"
+	"github.com/charmbracelet/crush/internal/ruleengine"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -465,7 +466,7 @@ func TestConfig_setupAgentsWithNoDisabledTools(t *testing.T) {
 	cfg.SetupAgents()
 	coderAgent, ok := cfg.Agents[AgentCoder]
 	require.True(t, ok)
-	assert.Equal(t, allToolNames(), coderAgent.AllowedTools)
+	assert.Equal(t, AgentCoderTools, coderAgent.AllowedTools)
 
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)
@@ -1246,5 +1247,146 @@ func TestConfig_configureSelectedModels(t *testing.T) {
 		require.Equal(t, "large-model", large.Model)
 		require.Equal(t, "openai", large.Provider)
 		require.Equal(t, int64(100), large.MaxTokens)
+	})
+}
+
+func TestPermissions_Validate(t *testing.T) {
+	tests := []struct {
+		name    string
+		perms   Permissions
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "valid rule-based permissions",
+			perms: Permissions{
+				Rules: []ruleengine.PermissionRule{
+					{Tool: "bash", Allow: []string{"ls", "pwd"}},
+					{Tool: "edit", Allow: []string{"**/*.go"}, Deny: []string{"**/.env"}},
+				},
+				DefaultEffect: "ask",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid legacy allowed_tools",
+			perms: Permissions{
+				AllowedTools: []string{"view", "ls", "grep"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "conflicting legacy and rules",
+			perms: Permissions{
+				AllowedTools: []string{"view", "ls"},
+				Rules: []ruleengine.PermissionRule{
+					{Tool: "bash", Allow: []string{"ls"}},
+				},
+			},
+			wantErr: true,
+			errMsg:  "cannot use both 'allowed_tools' (legacy) and 'rules'",
+		},
+		{
+			name: "invalid default effect",
+			perms: Permissions{
+				Rules:         []ruleengine.PermissionRule{{Tool: "bash", Allow: []string{"ls"}}},
+				DefaultEffect: "invalid",
+			},
+			wantErr: true,
+			errMsg:  "invalid default effect",
+		},
+		{
+			name: "empty permissions is valid",
+			perms: Permissions{
+				AllowedTools: []string{},
+				Rules:        []ruleengine.PermissionRule{},
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid rule in rules list",
+			perms: Permissions{
+				Rules: []ruleengine.PermissionRule{
+					{Tool: "", Allow: []string{"ls"}}, // Invalid: no tool
+				},
+			},
+			wantErr: true,
+			errMsg:  "rule 0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.perms.Validate()
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errMsg != "" {
+					assert.Contains(t, err.Error(), tt.errMsg)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestConfig_PermissionsValidation(t *testing.T) {
+	t.Run("config with valid rule-based permissions", func(t *testing.T) {
+		configJSON := `{
+			"permissions": {
+				"rules": [
+					{"tool": "bash", "allow": ["ls", "pwd"]},
+					{"tool": "edit", "allow": ["**/*.go"], "deny": ["**/.env"]}
+				],
+				"default": "ask"
+			}
+		}`
+
+		config, err := LoadReader(strings.NewReader(configJSON))
+		require.NoError(t, err)
+		assert.NotNil(t, config)
+		assert.NotNil(t, config.Permissions)
+		assert.Len(t, config.Permissions.Rules, 2)
+		assert.Equal(t, ruleengine.Ask, config.Permissions.DefaultEffect)
+	})
+
+	t.Run("config with valid legacy allowed_tools", func(t *testing.T) {
+		configJSON := `{
+			"permissions": {
+				"allowed_tools": ["view", "ls", "grep"]
+			}
+		}`
+
+		config, err := LoadReader(strings.NewReader(configJSON))
+		require.NoError(t, err)
+		assert.NotNil(t, config)
+		assert.NotNil(t, config.Permissions)
+		assert.Equal(t, []string{"view", "ls", "grep"}, config.Permissions.AllowedTools)
+	})
+
+	t.Run("config with conflicting formats fails", func(t *testing.T) {
+		configJSON := `{
+			"permissions": {
+				"allowed_tools": ["view", "ls"],
+				"rules": [{"tool": "bash", "allow": ["ls"]}]
+			}
+		}`
+
+		_, err := LoadReader(strings.NewReader(configJSON))
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "cannot use both 'allowed_tools' (legacy) and 'rules'")
+	})
+
+	t.Run("config with invalid default effect fails", func(t *testing.T) {
+		configJSON := `{
+			"permissions": {
+				"rules": [{"tool": "bash", "allow": ["ls"]}],
+				"default": "invalid"
+			}
+		}`
+
+		_, err := LoadReader(strings.NewReader(configJSON))
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid default effect")
 	})
 }

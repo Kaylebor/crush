@@ -128,7 +128,7 @@ func createNewFile(edit editContext, filePath, content string, call fantasy.Tool
 		content,
 		strings.TrimPrefix(filePath, edit.workingDir),
 	)
-	p := edit.permissions.Request(
+	_, err = edit.permissions.Request(
 		permission.CreatePermissionRequest{
 			SessionID:   sessionID,
 			Path:        fsext.PathOrPrefix(filePath, edit.workingDir),
@@ -143,8 +143,8 @@ func createNewFile(edit editContext, filePath, content string, call fantasy.Tool
 			},
 		},
 	)
-	if !p {
-		return fantasy.ToolResponse{}, permission.ErrorPermissionDenied
+	if err != nil {
+		return fantasy.ToolResponse{}, err
 	}
 
 	err = os.WriteFile(filePath, []byte(content), 0o644)
@@ -249,7 +249,7 @@ func deleteContent(edit editContext, filePath, oldString string, replaceAll bool
 		strings.TrimPrefix(filePath, edit.workingDir),
 	)
 
-	p := edit.permissions.Request(
+	_, err = edit.permissions.Request(
 		permission.CreatePermissionRequest{
 			SessionID:   sessionID,
 			Path:        fsext.PathOrPrefix(filePath, edit.workingDir),
@@ -264,8 +264,8 @@ func deleteContent(edit editContext, filePath, oldString string, replaceAll bool
 			},
 		},
 	)
-	if !p {
-		return fantasy.ToolResponse{}, permission.ErrorPermissionDenied
+	if err != nil {
+		return fantasy.ToolResponse{}, err
 	}
 
 	if isCrlf {
@@ -384,7 +384,7 @@ func replaceContent(edit editContext, filePath, oldString, newString string, rep
 		strings.TrimPrefix(filePath, edit.workingDir),
 	)
 
-	p := edit.permissions.Request(
+	_, err = edit.permissions.Request(
 		permission.CreatePermissionRequest{
 			SessionID:   sessionID,
 			Path:        fsext.PathOrPrefix(filePath, edit.workingDir),
@@ -399,8 +399,8 @@ func replaceContent(edit editContext, filePath, oldString, newString string, rep
 			},
 		},
 	)
-	if !p {
-		return fantasy.ToolResponse{}, permission.ErrorPermissionDenied
+	if err != nil {
+		return fantasy.ToolResponse{}, err
 	}
 
 	if isCrlf {

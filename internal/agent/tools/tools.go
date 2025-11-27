@@ -5,13 +5,15 @@ import (
 )
 
 type (
-	sessionIDContextKey string
-	messageIDContextKey string
+	sessionIDContextKey     string
+	messageIDContextKey     string
+	isInteractiveCLIContextKey string
 )
 
 const (
-	SessionIDContextKey sessionIDContextKey = "session_id"
-	MessageIDContextKey messageIDContextKey = "message_id"
+	SessionIDContextKey        sessionIDContextKey     = "session_id"
+	MessageIDContextKey        messageIDContextKey     = "message_id"
+	IsInteractiveCLIContextKey isInteractiveCLIContextKey = "is_interactive_cli"
 )
 
 func GetSessionFromContext(ctx context.Context) string {
@@ -36,4 +38,16 @@ func GetMessageFromContext(ctx context.Context) string {
 		return ""
 	}
 	return s
+}
+
+func GetIsInteractiveFromContext(ctx context.Context) bool {
+	isInteractive := ctx.Value(IsInteractiveCLIContextKey)
+	if isInteractive == nil {
+		return false
+	}
+	b, ok := isInteractive.(bool)
+	if !ok {
+		return false
+	}
+	return b
 }

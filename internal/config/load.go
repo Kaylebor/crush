@@ -41,6 +41,18 @@ func LoadReader(fd io.Reader) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Validate permissions configuration
+	if config.Permissions != nil {
+		if err := config.Permissions.Validate(); err != nil {
+			return nil, fmt.Errorf("invalid permissions configuration: %w", err)
+		}
+		// Compile rules for efficient evaluation
+		if err := config.Permissions.CompileRules(); err != nil {
+			return nil, fmt.Errorf("failed to compile permission rules: %w", err)
+		}
+	}
+
 	return &config, err
 }
 

@@ -18,8 +18,8 @@ type mockPermissionService struct {
 	*pubsub.Broker[permission.PermissionRequest]
 }
 
-func (m *mockPermissionService) Request(req permission.CreatePermissionRequest) bool {
-	return true
+func (m *mockPermissionService) Request(req permission.CreatePermissionRequest) (bool, error) {
+	return true, nil
 }
 
 func (m *mockPermissionService) Grant(req permission.PermissionRequest) {}
@@ -222,4 +222,12 @@ func TestMultiEditAllEditsFail(t *testing.T) {
 
 	require.Len(t, failedEdits, 2)
 	require.Equal(t, content, currentContent, "Content should be unchanged")
+}
+
+func (m *mockPermissionService) RequestWithDetails(opts permission.CreatePermissionRequest) permission.PermissionResult {
+	allowed, _ := m.Request(opts)
+	return permission.PermissionResult{
+		Allowed:       allowed,
+		ExplicitAllow: false, // Mock doesn't track this
+	}
 }
