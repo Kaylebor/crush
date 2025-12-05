@@ -2,6 +2,7 @@ package permission
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
@@ -122,45 +123,45 @@ func (a *ASTSafetyChecker) checkInteractiveTerminalApp(n *syntax.CallExpr) bool 
 		`^bundle\s+exec\s+rake\s+console`,
 		`^bundle\s+exec\s+rake\s+console.*`,
 		`^bin/rails\s+(c|console)`,
-		
+
 		// REPLs (will hang without input, AI should not access directly)
-		`^python\d*$`,           // python3 with no args = REPL mode
+		`^python\d*$`, // python3 with no args = REPL mode
 		`^irb$`,
-		`^node$`,                // node without script argument
-		`^php\s+-a`,            // PHP interactive mode
+		`^node$`,    // node without script argument
+		`^php\s+-a`, // PHP interactive mode
 		`^lua$`,
 		`^guile$`,
-		
+
 		// Databases (direct DB access is a security risk - AI should use application APIs, not DB CLIs)
-		`^psql`,         // Block ALL psql commands - direct DB access bypasses application logic
-		`^mysql`,        // Block ALL mysql commands - security boundary violation
-		`^sqlite3`,      // Block ALL sqlite3 commands - not appropriate for AI access
-		
+		`^psql`,    // Block ALL psql commands - direct DB access bypasses application logic
+		`^mysql`,   // Block ALL mysql commands - security boundary violation
+		`^sqlite3`, // Block ALL sqlite3 commands - not appropriate for AI access
+
 		// Editors (hang without TTY, AI should use edit/write tools)
-		`^vim(\s|$)`, `^vi(\s|$)`, `^nano(\s|$)`, 
+		`^vim(\s|$)`, `^vi(\s|$)`, `^nano(\s|$)`,
 		`^emacs(\s|$)`, `^less(\s|$)`, `^more(\s|$)`,
 		`^pico(\s|$)`, `^joe(\s|$)`,
-		
+
 		// Process managers (hang, not useful for AI)
 		`^top(\s|$)`, `^htop(\s|$)`, `^atop(\s|$)`,
 		`^screen(\s|$)`, `^tmux(\s|$)`,
-		
+
 		// Other interactive/unsafe tools
-		`^ssh(\s|$)`,           // SSH prompts for passwords
-		`^ftp(\s|$)`,           // FTP is interactive
-		`^telnet(\s|$)`,        // Telnet is interactive
-		`^script(\s|$)`,        // script creates TTY log
-		`^expect(\s|$)`,        // expect is for interactive automation
-		`^whiptail(\s|$)`,      // TUI dialogs fail without TTY
-		`^dialog(\s|$)`,        // TUI dialogs fail without TTY
+		`^ssh(\s|$)`,      // SSH prompts for passwords
+		`^ftp(\s|$)`,      // FTP is interactive
+		`^telnet(\s|$)`,   // Telnet is interactive
+		`^script(\s|$)`,   // script creates TTY log
+		`^expect(\s|$)`,   // expect is for interactive automation
+		`^whiptail(\s|$)`, // TUI dialogs fail without TTY
+		`^dialog(\s|$)`,   // TUI dialogs fail without TTY
 	}
-	
+
 	// First, check if it's a simple command (no arguments or only whitespace)
 	if len(n.Args) == 1 && (cmdName == "python" || cmdName == "python3" || cmdName == "irb" || cmdName == "node") {
 		// These launch REPL when called with no arguments
 		return true
 	}
-	
+
 	// For compound commands, get the full command string to match patterns
 	var cmdBuilder strings.Builder
 	cmdBuilder.WriteString(cmdName)
@@ -175,14 +176,14 @@ func (a *ASTSafetyChecker) checkInteractiveTerminalApp(n *syntax.CallExpr) bool 
 		}
 	}
 	fullCmd := cmdBuilder.String()
-	
+
 	// Check against patterns
 	for _, pattern := range patterns {
 		if matched, _ := regexp.MatchString(pattern, fullCmd); matched {
 			return true
 		}
 	}
-	
+
 	// Also check command name itself (for aliases, functions, etc.)
 	// This catches cases where the command is aliased to something dangerous
 	for _, pattern := range patterns {
@@ -193,7 +194,7 @@ func (a *ASTSafetyChecker) checkInteractiveTerminalApp(n *syntax.CallExpr) bool 
 			}
 		}
 	}
-	
+
 	return false
 }
 
@@ -281,13 +282,9 @@ func (a *ASTSafetyChecker) checkNode(node syntax.Node) bool {
 
 	case *syntax.Word:
 		// Check if any part of the word contains dangerous patterns (like command substitution)
-		for _, part := range n.Parts {
-			if a.checkNode(part) {
-				return true
-			}
-		}
-		// Don't check for dangerous network commands here - they're only dangerous in pipe context
-		return false
+		return slices.ContainsFunc(n.Parts, func(part syntax.WordPart) bool {
+			return a.checkNode(part)
+		})
 	}
 
 	return false

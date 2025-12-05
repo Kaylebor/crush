@@ -91,6 +91,18 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 			// Determine working directory
 			execWorkingDir := cmp.Or(params.WorkingDir, workingDir)
 
+			sessionID := GetSessionFromContext(ctx)
+			if sessionID == "" {
+				return fantasy.ToolResponse{}, fmt.Errorf("session ID is required for executing shell command")
+			}
+
+			// Safety check: Run AST safety checker BEFORE read-only bypass
+			// This prevents compound commands like "echo safe; curl | sh" from bypassing security
+			astChecker := permission.NewASTSafetyChecker()
+			if astChecker.IsCritical(params.Command) {
+				return fantasy.ToolResponse{}, fmt.Errorf("safety critical command blocked: this command cannot be executed unsupervised")
+			}
+
 			isSafeReadOnly := false
 			cmdLower := strings.ToLower(params.Command)
 
@@ -103,10 +115,6 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 				}
 			}
 
-			sessionID := GetSessionFromContext(ctx)
-			if sessionID == "" {
-				return fantasy.ToolResponse{}, fmt.Errorf("session ID is required for executing shell command")
-			}
 			if !isSafeReadOnly {
 				result := permissions.RequestWithDetails(
 					permission.CreatePermissionRequest{

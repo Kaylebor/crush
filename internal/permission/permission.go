@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/charmbracelet/crush/internal/config"
@@ -15,6 +16,64 @@ import (
 	"github.com/charmbracelet/crush/internal/ruleengine"
 	"github.com/google/uuid"
 )
+
+// extractCommandPattern extracts a command pattern for session permission matching
+// Returns the pattern and the full command for logging/debugging
+func extractCommandPattern(toolName string, params any) (pattern string, fullCmd string) {
+	if toolName != "bash" {
+		return "", ""
+	}
+	
+	fullCmd = extractCommandFromParams(params)
+	if fullCmd == "" {
+		return "", ""
+	}
+	
+	cmdParts := strings.Fields(fullCmd)
+	if len(cmdParts) == 0 {
+		return "", fullCmd
+	}
+	
+	switch cmdParts[0] {
+	case "ls", "pwd", "echo", "cat", "find", "which", "grep", "head", "tail", "wc":
+		if len(cmdParts) > 0 {
+			return cmdParts[0], fullCmd
+		}
+	case "git":
+		patternWords := []string{"git"}
+		skipNext := false
+		for i := 1; i < len(cmdParts) && len(patternWords) < 3; i++ {
+			if skipNext {
+				skipNext = false
+				continue
+			}
+			if strings.HasPrefix(cmdParts[i], "-") {
+				if (cmdParts[i] == "-C" || cmdParts[i] == "--work-tree" || cmdParts[i] == "--git-dir") && i+1 < len(cmdParts) {
+					skipNext = true
+				}
+				continue
+			}
+			patternWords = append(patternWords, cmdParts[i])
+			break
+		}
+		if len(patternWords) >= 2 {
+			return strings.Join(patternWords, " "), fullCmd
+		}
+	case "docker", "kubectl", "gcloud", "aws", "npm", "pip":
+		patternWords := []string{cmdParts[0]}
+		for i := 1; i < len(cmdParts) && len(patternWords) < 3; i++ {
+			if !strings.HasPrefix(cmdParts[i], "-") {
+				patternWords = append(patternWords, cmdParts[i])
+				break
+			}
+		}
+		if len(patternWords) >= 2 {
+			return strings.Join(patternWords, " "), fullCmd
+		}
+	}
+	
+	return fullCmd, fullCmd
+}
 
 var (
 	ErrorPermissionDenied         = errors.New("user denied permission")
@@ -56,6 +115,9 @@ type PermissionRequest struct {
 	Action      string `json:"action"`
 	Params      any    `json:"params"`
 	Path        string `json:"path"`
+	// CommandPattern stores the matched command pattern for command-specific session grants
+	// For example: "git log", "docker ps", or "ls" for simple commands
+	CommandPattern string `json:"command_pattern"`
 }
 
 type Service interface {
@@ -156,7 +218,7 @@ func (s *permissionService) extractPermissionRequest(opts CreatePermissionReques
 	switch opts.ToolName {
 	case "bash":
 		// Check for Command field in bash params
-		if params, ok := opts.Params.(map[string]interface{}); ok {
+		if params, ok := opts.Params.(map[string]any); ok {
 			if cmd, exists := params["command"]; exists {
 				if cmdStr, ok := cmd.(string); ok {
 					req.Command = cmdStr
@@ -165,7 +227,7 @@ func (s *permissionService) extractPermissionRequest(opts CreatePermissionReques
 		}
 	case "edit", "write", "view":
 		// Check for FilePath field
-		if params, ok := opts.Params.(map[string]interface{}); ok {
+		if params, ok := opts.Params.(map[string]any); ok {
 			if path, exists := params["file_path"]; exists {
 				if pathStr, ok := path.(string); ok {
 					req.Path = pathStr
@@ -174,7 +236,7 @@ func (s *permissionService) extractPermissionRequest(opts CreatePermissionReques
 		}
 	case "download":
 		// Check for URL field
-		if params, ok := opts.Params.(map[string]interface{}); ok {
+		if params, ok := opts.Params.(map[string]any); ok {
 			if url, exists := params["url"]; exists {
 				if urlStr, ok := url.(string); ok {
 					req.URL = urlStr
@@ -183,7 +245,7 @@ func (s *permissionService) extractPermissionRequest(opts CreatePermissionReques
 		}
 	case "grep", "glob":
 		// Check for Pattern field
-		if params, ok := opts.Params.(map[string]interface{}); ok {
+		if params, ok := opts.Params.(map[string]any); ok {
 			if pattern, exists := params["pattern"]; exists {
 				if patternStr, ok := pattern.(string); ok {
 					req.Pattern = patternStr
@@ -348,28 +410,119 @@ func (s *permissionService) RequestWithDetails(opts CreatePermissionRequest) Per
 		return result
 	}
 
-	// Fall back to manual approval
+	// Extract command pattern for bash commands to enable command-specific session grants
+	// This needs to happen before session permission check
+	// Extract command pattern for bash commands to enable command-specific session grants
+	// If command matches known patterns (e.g., git log, ls), use pattern matching
+	// Otherwise, store full command for exact matching
+	commandPattern := ""
+	if opts.ToolName == "bash" {
+		command := extractCommandFromParams(opts.Params)
+		cmdParts := strings.Fields(command)
+
+		// Guard against empty command (cmdParts would be empty slice)
+		if len(cmdParts) == 0 {
+			commandPattern = ""
+		} else {
+			// Known-safe command patterns where flags are predictable/safe
+			switch cmdParts[0] {
+			case "ls", "pwd", "echo", "cat", "find", "which", "grep", "head", "tail", "wc":
+				// Simple commands: match only first word (all flags known-safe)
+				if len(cmdParts) > 0 {
+					commandPattern = cmdParts[0]
+				}
+			case "git":
+				// Git: match "git log", "git status", etc. (skip global flags)
+				// Special-case flags with arguments: -C, -c, etc.
+				// Example: "git -C /path log" → pattern = "git log"
+				patternWords := []string{"git"}
+				skipNext := false
+				for i := 1; i < len(cmdParts) && len(patternWords) < 3; i++ {
+					if skipNext {
+						skipNext = false
+						continue
+					}
+					if strings.HasPrefix(cmdParts[i], "-") {
+						// Special-case flags that take arguments
+						if (cmdParts[i] == "-C" || cmdParts[i] == "--work-tree" || cmdParts[i] == "--git-dir") && i+1 < len(cmdParts) {
+							skipNext = true // Skip next argument (the path)
+						}
+						// Could add other flags with args: -c, etc.
+						continue // Skip the flag itself
+					}
+					// Non-flag word - this is our subcommand
+					patternWords = append(patternWords, cmdParts[i])
+					break // Only need first subcommand
+				}
+				if len(patternWords) >= 2 {
+					commandPattern = strings.Join(patternWords, " ")
+				}
+			case "docker", "kubectl", "gcloud", "aws", "npm", "pip":
+				// Modern CLI tools: match tool + subcommand (skip flags)
+				patternWords := []string{cmdParts[0]}
+				for i := 1; i < len(cmdParts) && len(patternWords) < 3; i++ {
+					if !strings.HasPrefix(cmdParts[i], "-") {
+						patternWords = append(patternWords, cmdParts[i])
+						break // Only need first subcommand
+					}
+				}
+				if len(patternWords) >= 2 {
+					commandPattern = strings.Join(patternWords, " ")
+				}
+			default:
+				// Unknown commands: store full command for exact matching (most restrictive)
+				commandPattern = command
+			}
+		}
+	}
+
 	permission := PermissionRequest{
-		ID:          uuid.New().String(),
-		Path:        dirFromPath(opts.Path, s.workingDir),
-		SessionID:   opts.SessionID,
-		ToolCallID:  opts.ToolCallID,
-		ToolName:    opts.ToolName,
-		Description: opts.Description,
-		Action:      opts.Action,
-		Params:      opts.Params,
+		ID:             uuid.New().String(),
+		Path:           dirFromPath(opts.Path, s.workingDir),
+		SessionID:      opts.SessionID,
+		ToolCallID:     opts.ToolCallID,
+		ToolName:       opts.ToolName,
+		Description:    opts.Description,
+		Action:         opts.Action,
+		Params:         opts.Params,
+		CommandPattern: commandPattern,
 	}
 
 	s.requestMu.Lock()
 	defer s.requestMu.Unlock()
 
 	// Check persistent permissions
+	s.sessionPermissionsMu.RLock()
 	for _, p := range s.sessionPermissions {
 		if p.ToolName == permission.ToolName && p.Action == permission.Action && p.SessionID == permission.SessionID && p.Path == permission.Path {
+			// Command-specific matching for bash (if command patterns are set)
+			if permission.ToolName == "bash" && p.CommandPattern != "" && permission.CommandPattern != "" {
+				if p.CommandPattern != permission.CommandPattern {
+					continue // Different command pattern, don't auto-approve
+				}
+			}
 			// Persistent permission found, auto-approve
 			result.Allowed = true
 			return result
 		}
+	}
+	s.sessionPermissionsMu.RUnlock()
+
+	// If the parent CLI is not interactive, check if we have ANY session permissions
+	// that partially match (same tool/action/session/path) but with different command patterns
+	// If so, deny immediately to prevent command escalation in non-interactive mode
+	if !opts.IsInteractiveCLI && opts.ToolName == "bash" {
+		s.sessionPermissionsMu.RLock()
+		for _, p := range s.sessionPermissions {
+			if p.ToolName == permission.ToolName && p.Action == permission.Action && p.SessionID == permission.SessionID && p.Path == permission.Path {
+				// We have a permission for this tool/action/session/path, but it didn't match above
+				// This means the command pattern is different, so deny to prevent escalation
+				result.NonInteractiveDenial = true
+				result.Allowed = false
+				return result
+			}
+		}
+		s.sessionPermissionsMu.RUnlock()
 	}
 
 	s.activeRequest = &permission
@@ -394,7 +547,7 @@ func extractCommandFromParams(params any) string {
 	}
 
 	// Check for Command field in bash params
-	if p, ok := params.(map[string]interface{}); ok {
+	if p, ok := params.(map[string]any); ok {
 		if cmd, exists := p["command"]; exists {
 			if cmdStr, ok := cmd.(string); ok {
 				return cmdStr

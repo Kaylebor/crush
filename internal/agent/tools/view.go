@@ -84,13 +84,14 @@ func NewViewTool(lspClients *csync.Map[string, *lsp.Client], permissions permiss
 
 				_, reqErr := permissions.Request(
 					permission.CreatePermissionRequest{
-						SessionID:   sessionID,
-						Path:        absFilePath,
-						ToolCallID:  call.ID,
-						ToolName:    ViewToolName,
-						Action:      "read",
-						Description: fmt.Sprintf("Read file outside working directory: %s", absFilePath),
-						Params:      ViewPermissionsParams(params),
+						SessionID:        sessionID,
+						Path:             absFilePath,
+						ToolCallID:       call.ID,
+						ToolName:         ViewToolName,
+						Action:           "read",
+						Description:      fmt.Sprintf("Read file outside working directory: %s", absFilePath),
+						Params:           ViewPermissionsParams(params),
+						IsInteractiveCLI: GetIsInteractiveFromContext(ctx),
 					},
 				)
 

@@ -112,17 +112,18 @@ func NewWriteTool(lspClients *csync.Map[string, *lsp.Client], permissions permis
 
 			_, reqErr := permissions.Request(
 				permission.CreatePermissionRequest{
-					SessionID:   sessionID,
-					Path:        fsext.PathOrPrefix(filePath, workingDir),
-					ToolCallID:  call.ID,
-					ToolName:    WriteToolName,
-					Action:      "write",
-					Description: fmt.Sprintf("Create file %s", filePath),
+					SessionID:        sessionID,
+					Path:             fsext.PathOrPrefix(filePath, workingDir),
+					ToolCallID:       call.ID,
+					ToolName:         WriteToolName,
+					Action:           "write",
+					Description:      fmt.Sprintf("Create file %s", filePath),
 					Params: WritePermissionsParams{
 						FilePath:   filePath,
 						OldContent: oldContent,
 						NewContent: params.Content,
 					},
+					IsInteractiveCLI: GetIsInteractiveFromContext(ctx),
 				},
 			)
 			if reqErr != nil {

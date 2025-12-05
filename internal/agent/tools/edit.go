@@ -130,17 +130,18 @@ func createNewFile(edit editContext, filePath, content string, call fantasy.Tool
 	)
 	_, err = edit.permissions.Request(
 		permission.CreatePermissionRequest{
-			SessionID:   sessionID,
-			Path:        fsext.PathOrPrefix(filePath, edit.workingDir),
-			ToolCallID:  call.ID,
-			ToolName:    EditToolName,
-			Action:      "write",
-			Description: fmt.Sprintf("Create file %s", filePath),
+			SessionID:        sessionID,
+			Path:             fsext.PathOrPrefix(filePath, edit.workingDir),
+			ToolCallID:       call.ID,
+			ToolName:         EditToolName,
+			Action:           "write",
+			Description:      fmt.Sprintf("Create file %s", filePath),
 			Params: EditPermissionsParams{
 				FilePath:   filePath,
 				OldContent: "",
 				NewContent: content,
 			},
+			IsInteractiveCLI: GetIsInteractiveFromContext(edit.ctx),
 		},
 	)
 	if err != nil {
@@ -386,17 +387,18 @@ func replaceContent(edit editContext, filePath, oldString, newString string, rep
 
 	_, err = edit.permissions.Request(
 		permission.CreatePermissionRequest{
-			SessionID:   sessionID,
-			Path:        fsext.PathOrPrefix(filePath, edit.workingDir),
-			ToolCallID:  call.ID,
-			ToolName:    EditToolName,
-			Action:      "write",
-			Description: fmt.Sprintf("Replace content in file %s", filePath),
+			SessionID:        sessionID,
+			Path:             fsext.PathOrPrefix(filePath, edit.workingDir),
+			ToolCallID:       call.ID,
+			ToolName:         EditToolName,
+			Action:           "write",
+			Description:      fmt.Sprintf("Replace content in file %s", filePath),
 			Params: EditPermissionsParams{
 				FilePath:   filePath,
 				OldContent: oldContent,
 				NewContent: newContent,
 			},
+			IsInteractiveCLI: GetIsInteractiveFromContext(edit.ctx),
 		},
 	)
 	if err != nil {
